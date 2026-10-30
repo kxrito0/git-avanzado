@@ -67,16 +67,13 @@ class HandTracker {
     }
 
     try {
-      if (typeof ml5 === 'undefined') {
-        throw new Error('ml5 no está cargado (revisá el <script> del CDN en index.html)');
+      if (typeof ml5 === 'undefined' || typeof ml5.handPose !== 'function') {
+        throw new Error(
+          'ml5 no está cargado o no expone handPose() (revisá el <script> del CDN en index.html)'
+        );
       }
 
-      // OJO: ml5.handPose() devuelve la instancia al instante, NO una promesa
-      // con el modelo listo. `await ml5.handPose()` no espera nada: el modelo
-      // todavía se está descargando y detectStart() explotaría con model=null.
-      // La promesa real es `instance.ready`.
-      const instance = ml5.handPose({ maxHands: this.maxHands });
-      await instance.ready;
+      const instance = await this._resolveModel(ml5.handPose({ maxHands: this.maxHands }));
 
       this._model = instance;
       this.connections =
@@ -144,6 +141,32 @@ class HandTracker {
     this._video = video;
     this.aspect =
       (video.videoWidth || this.requestedWidth) / (video.videoHeight || this.requestedHeight);
+  }
+
+  /**
+   * Normaliza las dos formas en que ml5 entrega el modelo, según el build:
+   *   a) devuelve la instancia al instante y expone `ready` (promesa del modelo)
+   *   b) devuelve una promesa que resuelve con la instancia ya cargada
+   *
+   * `await` sobre un objeto común es un no-op, así que el mismo camino sirve
+   * para las dos. Si el resultado no expone `detectStart()` fallamos acá, con
+   * el tipo real recibido, en vez de dejar que reviente más abajo.
+   */
+  async _resolveModel(factoryResult) {
+    const instance =
+      factoryResult && typeof factoryResult.then === 'function'
+        ? await factoryResult
+        : factoryResult;
+
+    if (!instance || typeof instance.detectStart !== 'function') {
+      throw new Error(
+        `ml5.handPose() no expone detectStart(); recibido: ${Object.prototype.toString.call(instance)}`
+      );
+    }
+
+    if (instance.ready && typeof instance.ready.then === 'function') await instance.ready;
+
+    return instance;
   }
 
   _onResults(results) {
@@ -239,7 +262,7 @@ class HandRenderer {
     const messages = {
       loading: 'Cargando modelo de manos…',
       'error:camera': 'No se pudo acceder a la cámara. Revisá los permisos del navegador.',
-      'error:model': 'No se pudo cargar el modelo. ¿Hay conexión a internet?',
+      'error:model': 'No se pudo iniciar el modelo de manos.',
     };
     noStroke();
     fill(200);
@@ -247,11 +270,12 @@ class HandRenderer {
     textSize(16);
     text(messages[status] || status, width / 2, height / 2);
 
+    // El detalle es la única pista real: nunca lo maquilles con una suposición
+    // como "¿hay conexión?". Si el modelo falla, acá va el motivo de verdad.
     if (detail) {
-      const line = detail.length > 90 ? `${detail.slice(0, 90)}…` : detail;
       textSize(12);
       fill(140);
-      text(line, width / 2, height / 2 + 28);
+      text(detail, width / 2, height / 2 + 30, Math.min(width - 40, 720));
     }
   }
 }

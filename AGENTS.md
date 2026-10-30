@@ -50,7 +50,8 @@ Coordinates are **normalized 0..1 and already mirrored** (selfie). Do not re-sca
 
 ## ml5 gotchas
 
-- `ml5.handPose()` returns the instance **immediately**, not a promise for the loaded model. `await ml5.handPose()` is a no-op. Await `instance.ready` before calling `detectStart()`, or the detection loop hits `model === null` and dies as an unhandled rejection with a blank screen.
+- `ml5.handPose()` is **shape-dependent**, and this is the trap that cost two debugging sessions. ml5 1.4.0 calls `p5Utils.setupP5Integration(...)`: if p5 exposes `p5.prototype.registerMethod` (all of p5 1.x) it keeps factories synchronous; otherwise it rewrites every factory as `(...args) => r.ready.then(() => r)` — a **Promise**. p5 2.3.3 has no `registerMethod` (`grep registerMethod p5.min.js` → 0 matches), so on this stack `ml5.handPose()` returns `Promise<instance>`, not the instance. Always `await` it and then await `instance.ready` when present; `js/handpose.js::_resolveModel` does exactly that and throws a typed error if the result has no `detectStart()`.
+- Never describe a model failure as "no internet" in the UI. `HandRenderer._drawStatus` shows `tracker.error` verbatim because a guess hides the actual exception.
 - `setup()` is intentionally **not** async: `tracker.start()` is fire-and-forget so `draw()` renders the loading/error state instead of showing nothing while the model downloads. Never block setup on the model.
 - Detection runs in ml5's own loop, so never call `estimateHands`/`detect` yourself in `draw()`.
 
